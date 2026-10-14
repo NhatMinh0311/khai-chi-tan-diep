@@ -1,0 +1,11 @@
+# Chuẩn hóa xuống dòng LF cho mọi tệp văn bản, kể cả khi làm việc trên Windows.
+# Script shell với CRLF không chạy được trong container Linux.
+*           text=auto eol=lf
+*.sh        text eol=lf
+*.sql       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.png       binary
+*.jpg       binary
+*.xlsx      binary

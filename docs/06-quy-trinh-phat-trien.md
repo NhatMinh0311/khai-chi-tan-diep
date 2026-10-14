@@ -3,7 +3,7 @@
 | Thuộc tính | Giá trị |
 |---|---|
 | Mã tài liệu | GP-DOC-06 |
-| Phiên bản | 1.1 |
+| Phiên bản | 1.2 |
 | Ngày ban hành | 15/10/2026 |
 | Tài liệu liên quan | `.github/CODEOWNERS`, `.github/pull_request_template.md`, `.github/workflows/ci.yml`, `.github/rulesets/main-branch-protection.json` |
 
@@ -45,7 +45,8 @@ liên tục (CI) và lộ trình triển khai liên tục (CD) của dự án Kh
 5. Commit mới đẩy lên sau khi đã được duyệt làm mất hiệu lực lượt duyệt cũ; pull request cần được duyệt lại.
 6. Merge bằng squash; nhánh làm việc được xóa sau khi merge.
 
-Thay đổi đặc tả API, lược đồ cơ sở dữ liệu và tài liệu tuân theo quy tắc tại `README.md` mục "Quy trình đóng góp".
+Lệnh và thao tác chi tiết cho thành viên, cùng quy tắc theo loại thay đổi (đặc tả API, migration, tài liệu),
+được quy định tại `CONTRIBUTING.md`.
 
 ## 4. Cấu hình bảo vệ nhánh `main`
 
@@ -133,5 +134,6 @@ Thành phần CD chưa được triển khai. Thiết kế dự kiến:
 
 | Phiên bản | Ngày | Nội dung |
 |---|---|---|
+| 1.2 | 15/10/2026 | Tham chiếu hướng dẫn thao tác `CONTRIBUTING.md` |
 | 1.1 | 15/10/2026 | Cập nhật tên ruleset, đường dẫn tệp xuất và tùy chọn cập nhật nhánh theo cấu hình thực tế |
 | 1.0 | 15/10/2026 | Ban hành lần đầu |

@@ -74,7 +74,7 @@ docker compose exec -T db psql -U gp_owner -d giapha \
 - Tác vụ định kỳ của backend được liệt kê tại GP-DOC-05 mục 7.
 
 ## Quy trình đóng góp
-Quy trình chi tiết tại GP-DOC-06.
+Quy trình tại GP-DOC-06; lệnh và thao tác chi tiết tại `CONTRIBUTING.md`.
 
 - Mọi thay đổi vào nhánh `main` được thực hiện qua pull request và phải được review.
 - Thay đổi API được thực hiện qua pull request sửa `api/openapi.yaml`.

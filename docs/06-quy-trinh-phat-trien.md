@@ -3,9 +3,9 @@
 | Thuộc tính | Giá trị |
 |---|---|
 | Mã tài liệu | GP-DOC-06 |
-| Phiên bản | 1.0 |
+| Phiên bản | 1.1 |
 | Ngày ban hành | 15/10/2026 |
-| Tài liệu liên quan | `.github/CODEOWNERS`, `.github/pull_request_template.md`, `.github/workflows/ci.yml` |
+| Tài liệu liên quan | `.github/CODEOWNERS`, `.github/pull_request_template.md`, `.github/workflows/ci.yml`, `.github/rulesets/main-branch-protection.json` |
 
 ## 1. Phạm vi
 
@@ -49,7 +49,7 @@ Thay đổi đặc tả API, lược đồ cơ sở dữ liệu và tài liệu 
 
 ## 4. Cấu hình bảo vệ nhánh `main`
 
-Ruleset **"Bảo vệ main"** (GitHub → Settings → Rules → Rulesets):
+Ruleset **"main branch protection"** (GitHub → Settings → Rules → Rulesets):
 
 | Mục | Giá trị | Mục đích |
 |---|---|---|
@@ -68,6 +68,7 @@ Ruleset **"Bảo vệ main"** (GitHub → Settings → Rules → Rulesets):
 | — Require an additional approval for unattributed Copilot pull requests | Bật | Pull request do tác tử Copilot tạo cần thêm lượt duyệt của người |
 | — Allowed merge methods | Squash | |
 | Require status checks to pass | Bật, kiểm tra `api-lint`, `db-tests` | CI phải thành công trước khi merge |
+| — Require branches to be up to date before merging | Tắt | Nhánh không bắt buộc cập nhật theo `main` trước khi merge; squash merge và CI trên `main` phát hiện xung đột sau merge |
 | Các quy tắc còn lại | Tắt | |
 
 **Lý do cần CODEOWNERS.** Nếu chỉ yêu cầu một lượt duyệt, hai thành viên bất kỳ có quyền ghi có thể duyệt pull request
@@ -81,7 +82,7 @@ của nhau và merge mà không qua trưởng nhóm. Tùy chọn "Require review
 | Trưởng nhóm (QA, DevOps, kiểm thử bảo mật) | Admin |
 | Backend, Frontend | Write (không sửa được ruleset, không bỏ qua được quy tắc) |
 
-Ruleset được xuất ra JSON (Rulesets → Export) và lưu tại `.github/rulesets/bao-ve-main.json` mỗi khi cấu hình thay đổi,
+Ruleset được xuất ra JSON (Rulesets → Export) và lưu tại `.github/rulesets/main-branch-protection.json` mỗi khi cấu hình thay đổi,
 để cấu hình được quản lý phiên bản cùng mã nguồn.
 
 ## 5. Pipeline CI
@@ -116,7 +117,7 @@ Các job được bổ sung khi mã nguồn backend và frontend có mặt:
 | Lý do thay đổi | Mô tả pull request, mã yêu cầu liên kết |
 | Người duyệt | Lịch sử review của pull request |
 | Kết quả kiểm thử | Lịch sử chạy GitHub Actions gắn với từng pull request |
-| Cấu hình bảo vệ nhánh | `.github/rulesets/bao-ve-main.json` |
+| Cấu hình bảo vệ nhánh | `.github/rulesets/main-branch-protection.json` |
 
 ## 7. Triển khai liên tục (CD)
 
@@ -132,4 +133,5 @@ Thành phần CD chưa được triển khai. Thiết kế dự kiến:
 
 | Phiên bản | Ngày | Nội dung |
 |---|---|---|
+| 1.1 | 15/10/2026 | Cập nhật tên ruleset, đường dẫn tệp xuất và tùy chọn cập nhật nhánh theo cấu hình thực tế |
 | 1.0 | 15/10/2026 | Ban hành lần đầu |

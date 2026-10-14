@@ -19,6 +19,7 @@ Công nghệ: React, Spring Boot, PostgreSQL, Redis.
 | `docs/04-goi-dich-vu-va-thanh-toan.md` | GP-DOC-04: Gói dịch vụ, hạn mức, thanh toán VNPay |
 | `docs/05-quan-tri-va-chuyen-giao.md` | GP-DOC-05: Quản trị nền tảng, xác thực bổ sung, chuyển giao trưởng tộc |
 | `docs/06-quy-trinh-phat-trien.md` | GP-DOC-06: Quy trình phát triển, bảo vệ nhánh, CI/CD |
+| `docs/07-nhat-ky-su-dung-ai.md` | GP-DOC-07: Nhật ký sử dụng công cụ AI |
 | `.github/` | CODEOWNERS, mẫu pull request, workflow CI |
 | `docs/adr/` | Hồ sơ quyết định kiến trúc (ADR-0001 đến ADR-0010) |
 

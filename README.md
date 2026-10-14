@@ -18,6 +18,8 @@ Công nghệ: React, Spring Boot, PostgreSQL, Redis.
 | `docs/03-phan-quyen.md` | GP-DOC-03: Phân quyền, cách ly dữ liệu, cache, ánh xạ lỗi |
 | `docs/04-goi-dich-vu-va-thanh-toan.md` | GP-DOC-04: Gói dịch vụ, hạn mức, thanh toán VNPay |
 | `docs/05-quan-tri-va-chuyen-giao.md` | GP-DOC-05: Quản trị nền tảng, xác thực bổ sung, chuyển giao trưởng tộc |
+| `docs/06-quy-trinh-phat-trien.md` | GP-DOC-06: Quy trình phát triển, bảo vệ nhánh, CI/CD |
+| `.github/` | CODEOWNERS, mẫu pull request, workflow CI |
 | `docs/adr/` | Hồ sơ quyết định kiến trúc (ADR-0001 đến ADR-0010) |
 
 ## Môi trường phát triển
@@ -71,6 +73,8 @@ docker compose exec -T db psql -U gp_owner -d giapha \
 - Tác vụ định kỳ của backend được liệt kê tại GP-DOC-05 mục 7.
 
 ## Quy trình đóng góp
+Quy trình chi tiết tại GP-DOC-06.
+
 - Mọi thay đổi vào nhánh `main` được thực hiện qua pull request và phải được review.
 - Thay đổi API được thực hiện qua pull request sửa `api/openapi.yaml`.
 - Thay đổi lược đồ được thực hiện bằng migration Flyway mới; migration đã merge không được sửa.

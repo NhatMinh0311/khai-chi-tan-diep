@@ -115,6 +115,8 @@ thành viên đánh giá kết quả, phát hiện điểm chưa đạt và đ�
 | 8 | Duyệt quyền của EDITOR | Thu hẹp quyền EDITOR | Không đạt ở lần đầu: thiết kế cho phép EDITOR mời thành viên, tạo link và xuất dữ liệu, trái với vai trò chỉ ghi dữ liệu gia phả |
 | 9 | Đơn khôi phục là gì; đưa vào MVP hay không | Giải thích, đánh dấu sau MVP | Để sau MVP |
 | 10 | Thiết lập GitHub | Hướng dẫn, tệp cấu hình, workflow CI | Không đạt ở lần đầu: cấu hình ngoài kho mã chưa được ghi lại phục vụ báo cáo; bổ sung GP-DOC-06 và nhật ký này |
+| 11 | Quy trình ghi nhật ký khi có bài toán mới | Bổ sung quy trình và mẫu ghi nhật ký (mục 2.1) | Đạt |
+| 12 | Quy trình tích hợp chưa được phổ biến tới thành viên: lệnh và thao tác cụ thể | `CONTRIBUTING.md`; `.gitattributes` chuẩn hóa xuống dòng LF | Bổ sung: thiếu sót được thành viên phát hiện sau vòng 10 |
 
 ### 3.5. Các lần điều chỉnh hướng
 

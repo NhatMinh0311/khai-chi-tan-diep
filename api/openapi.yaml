@@ -1,0 +1,2994 @@
+openapi: 3.1.0
+info:
+  title: Khai Chi Tán Diệp API
+  version: 0.2.0
+  description: |
+    Đặc tả API của hệ thống quản lý gia phả, là hợp đồng giữa frontend và backend.
+    Mọi thay đổi đặc tả được thực hiện qua pull request sửa tệp này.
+
+    **Quy ước chung** (chi tiết tại GP-DOC-03, `docs/03-phan-quyen.md`)
+    - Xác thực bằng JWT trong header `Authorization: Bearer <token>`.
+    - Tài nguyên thuộc một dòng họ nằm dưới đường dẫn `/clans/{clanId}`; chức năng quản trị nền tảng nằm dưới `/admin`.
+    - Tài nguyên không tồn tại, thuộc dòng họ khác hoặc nằm ngoài phạm vi xem nhận cùng phản hồi **404**.
+      Phản hồi **403** chỉ dùng khi người dùng xem được tài nguyên nhưng không có quyền thực hiện hành động.
+    - Trường bị ẩn theo nhóm trường của người xem không có mặt trong JSON; tên trường được liệt kê trong
+      `redactedFields`. Trường có mặt với giá trị `null` biểu thị dữ liệu chưa được nhập.
+    - Vượt hạn mức hoặc dùng tính năng ngoài gói nhận phản hồi **402** (GP-DOC-04).
+    - Thao tác nhạy cảm (chuyển giao quyền trưởng tộc) yêu cầu header `X-Step-Up-Token` nhận được từ
+      `/auth/step-up/verify`; thiếu hoặc hết hạn nhận phản hồi 403 `STEP_UP_REQUIRED`.
+    - Lỗi trả về dạng `application/problem+json` (RFC 9457), bổ sung thuộc tính `code` (enum `ErrorCode`).
+    - Định danh là UUID. Thời điểm theo ISO 8601, múi giờ UTC. Ngày gia phả dùng `SolarDate` và `LunarDate`.
+    - PATCH: trường vắng mặt được giữ nguyên; trường có giá trị `null` bị xóa. Thuộc tính `version` là bắt buộc;
+      version không khớp nhận phản hồi 409 `VERSION_CONFLICT`.
+    - Phân trang: `page` bắt đầu từ 0, `size` tối đa 100.
+    - Operation có `x-mvp: false` thuộc chức năng sau MVP (GP-DOC-01 mục 5).
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Môi trường phát triển cục bộ
+  - url: http://localhost:4010
+    description: Mock API (Prism)
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Đăng ký, xác minh email, đăng nhập, mật khẩu, xác thực bổ sung
+  - name: Plans
+    description: Gói dịch vụ, hạn mức và thanh toán
+  - name: Clans
+    description: Dòng họ (tenant)
+  - name: ViewPolicies
+    description: Chế độ xem dùng cho thành viên và link chia sẻ
+  - name: Members
+    description: Thành viên, vai trò, gắn tài khoản với hồ sơ
+  - name: Invitations
+    description: Lời mời tham gia dòng họ
+  - name: Ownership
+    description: Người kế nhiệm và chuyển giao quyền trưởng tộc
+  - name: Persons
+    description: Hồ sơ người
+  - name: Unions
+    description: Hôn phối và quan hệ cha mẹ – con
+  - name: Tree
+    description: Cây gia phả
+  - name: ShareLinks
+    description: Link chia sẻ và phiên khách
+  - name: Export
+    description: Xuất dữ liệu
+  - name: Audit
+    description: Nhật ký truy cập và thay đổi
+  - name: Calendar
+    description: Quy đổi âm lịch – dương lịch Việt Nam
+  - name: Admin
+    description: Quản trị nền tảng (SYSTEM_ADMIN, SUPPORT); không truy cập dữ liệu gia phả
+
+paths:
+  # ================================================================== Auth
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Đăng ký tài khoản
+      description: Tạo tài khoản và gửi email xác minh. Tài khoản chưa xác minh không tạo dòng họ, không nhận lời mời được.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Đã tạo tài khoản
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      operationId: verifyEmail
+      summary: Xác minh email bằng token trong email
+      description: Token có hiệu lực 24 giờ và chỉ dùng một lần.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+      responses:
+        '204': { description: Đã xác minh }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /auth/verify-email/resend:
+    post:
+      tags: [Auth]
+      operationId: resendVerificationEmail
+      summary: Gửi lại email xác minh cho người dùng hiện tại
+      description: Giới hạn 3 yêu cầu/giờ/tài khoản.
+      responses:
+        '202': { description: Đã đưa email vào hàng đợi }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Đăng nhập
+      description: |
+        Trả về access token trong body và đặt refresh token trong cookie `gp_refresh`
+        (HttpOnly, Secure, SameSite=Strict, Path=/api/v1/auth). Client lưu access token trong bộ nhớ,
+        không lưu vào localStorage. Sai email và sai mật khẩu nhận cùng phản hồi 401.
+        Giới hạn: 5 lần sai trong 15 phút theo cặp (IP, email).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          headers:
+            Set-Cookie:
+              description: Refresh token
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Lấy access token mới bằng refresh cookie
+      description: |
+        Refresh token được xoay vòng: mỗi lần gọi phát hành token mới và vô hiệu hóa token cũ.
+        Việc sử dụng lại token cũ nhận phản hồi 401 và dẫn tới thu hồi toàn bộ chuỗi token của phiên.
+        Header `X-Requested-With: XMLHttpRequest` là bắt buộc (chống CSRF cho endpoint dùng cookie).
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '200':
+          description: Token mới
+          headers:
+            Set-Cookie:
+              description: Refresh token mới
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Đăng xuất (thu hồi refresh token hiện tại)
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '204': { description: Đã đăng xuất }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/password/forgot:
+    post:
+      tags: [Auth]
+      operationId: forgotPassword
+      summary: Yêu cầu đặt lại mật khẩu
+      description: |
+        Luôn trả về 202, kể cả khi email không tồn tại, để không lộ thông tin tài khoản.
+        Email chứa token có hiệu lực 30 phút. Giới hạn 3 yêu cầu/giờ theo email và 10 yêu cầu/giờ theo IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ForgotPasswordRequest' }
+      responses:
+        '202': { description: Đã tiếp nhận }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/password/reset:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      summary: Đặt lại mật khẩu bằng token
+      description: Token chỉ dùng một lần. Đặt lại thành công thu hồi toàn bộ refresh token của tài khoản.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResetPasswordRequest' }
+      responses:
+        '204': { description: Đã đặt lại mật khẩu }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /auth/step-up:
+    post:
+      tags: [Auth]
+      operationId: startStepUp
+      summary: Bắt đầu xác thực bổ sung (mật khẩu + OTP qua email)
+      description: |
+        Kiểm tra lại mật khẩu, sau đó gửi mã OTP 6 chữ số tới email của người dùng. Mã có hiệu lực 10 phút,
+        tối đa 5 lần nhập sai.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StepUpRequest' }
+      responses:
+        '200':
+          description: Đã gửi OTP
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StepUpChallenge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/step-up/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyStepUp
+      summary: Xác minh OTP, nhận step-up token (5 phút)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StepUpVerifyRequest' }
+      responses:
+        '200':
+          description: OTP hợp lệ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StepUpToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Thông tin người dùng hiện tại
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ================================================================== Plans & payments
+  /plans:
+    get:
+      tags: [Plans]
+      operationId: listPlans
+      summary: Danh sách gói dịch vụ
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Plan' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /clans/{clanId}/entitlements:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Plans]
+      operationId: getEntitlements
+      summary: Gói hiệu lực, hạn mức và mức sử dụng của dòng họ (thành viên)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Entitlements' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /clans/{clanId}/payments:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Plans]
+      operationId: listPayments
+      summary: Lịch sử thanh toán (OWNER)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Payment' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Plans]
+      operationId: createPayment
+      summary: Tạo giao dịch mua hoặc gia hạn gói (OWNER)
+      description: |
+        Số tiền do máy chủ tính từ bảng giá; client không gửi số tiền. Phản hồi chứa `paymentUrl` của VNPay
+        (đã ký HMAC-SHA512); client chuyển hướng trình duyệt tới URL này.
+        Mua cùng gói khi gói còn hạn: cộng thêm thời gian. Mua gói khác: kỳ mới bắt đầu ngay, thời gian còn lại
+        của gói cũ không được quy đổi.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePaymentRequest' }
+      responses:
+        '201':
+          description: Đã tạo giao dịch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentCreated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /payments/vnpay/return:
+    get:
+      tags: [Plans]
+      operationId: vnpayReturn
+      summary: Trang trả về của VNPay (chỉ hiển thị kết quả)
+      description: |
+        Backend xác minh chữ ký rồi chuyển hướng tới trang kết quả của frontend. Endpoint này **không**
+        kích hoạt gói; chỉ IPN kích hoạt gói. Trạng thái hiển thị lấy từ cơ sở dữ liệu.
+      security: []
+      parameters:
+        - name: vnp_TxnRef
+          in: query
+          required: true
+          schema: { type: string }
+        - name: vnp_SecureHash
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '302':
+          description: Chuyển hướng tới `/billing/result?paymentId=<id>` của frontend
+          headers:
+            Location:
+              schema: { type: string }
+
+  /payments/vnpay/ipn:
+    get:
+      tags: [Plans]
+      operationId: vnpayIpn
+      summary: IPN từ VNPay (máy chủ tới máy chủ)
+      description: |
+        Nguồn duy nhất kích hoạt gói. Trình tự: xác minh chữ ký HMAC-SHA512, tìm giao dịch theo `vnp_TxnRef`,
+        so khớp số tiền (`vnp_Amount` chia 100), cập nhật trạng thái trong một transaction. Xử lý idempotent:
+        IPN lặp lại cho giao dịch đã kết thúc trả `RspCode=02`. Mã phản hồi theo đặc tả VNPay:
+        `00` thành công, `01` không tìm thấy giao dịch, `02` giao dịch đã xác nhận, `04` sai số tiền,
+        `97` sai chữ ký, `99` lỗi khác. Luôn trả HTTP 200.
+      security: []
+      parameters:
+        - { name: vnp_TxnRef, in: query, required: true, schema: { type: string } }
+        - { name: vnp_Amount, in: query, required: true, schema: { type: string } }
+        - { name: vnp_ResponseCode, in: query, required: true, schema: { type: string } }
+        - { name: vnp_TransactionStatus, in: query, required: true, schema: { type: string } }
+        - { name: vnp_TransactionNo, in: query, schema: { type: string } }
+        - { name: vnp_SecureHash, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Phản hồi theo đặc tả VNPay
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VnpayIpnResponse' }
+
+  # ================================================================== Clans
+  /clans:
+    get:
+      tags: [Clans]
+      operationId: listMyClans
+      summary: Danh sách dòng họ mà người dùng hiện tại là thành viên
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ClanSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Clans]
+      operationId: createClan
+      summary: Tạo dòng họ (người tạo trở thành OWNER, gói FREE)
+      description: Yêu cầu email đã xác minh; chưa xác minh nhận phản hồi 403 `EMAIL_NOT_VERIFIED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateClanRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Clan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Clans]
+      operationId: getClan
+      summary: Thông tin dòng họ và quyền của người xem (khách cũng gọi được)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Clan' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Clans]
+      operationId: updateClan
+      summary: Sửa thông tin dòng họ, thủy tổ, chế độ xem mặc định của thành viên (OWNER)
+      description: Đổi `defaultMemberPolicyId` áp dụng ngay cho mọi MEMBER không có chế độ xem riêng.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateClanRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Clan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  # ================================================================== View policies
+  /clans/{clanId}/view-policies:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [ViewPolicies]
+      operationId: listViewPolicies
+      summary: Danh sách chế độ xem (OWNER)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ViewPolicy' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [ViewPolicies]
+      operationId: createViewPolicy
+      summary: Tạo chế độ xem (OWNER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViewPolicyInput' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewPolicy' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/view-policies/{policyId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/PolicyId'
+    get:
+      tags: [ViewPolicies]
+      operationId: getViewPolicy
+      summary: Xem một chế độ xem (OWNER)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewPolicy' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [ViewPolicies]
+      operationId: updateViewPolicy
+      summary: Sửa chế độ xem (OWNER)
+      description: |
+        Thay đổi có hiệu lực ngay với mọi thành viên và link đang dùng chế độ xem này. Chế độ xem đang được
+        link chia sẻ sử dụng không được vượt trần của link (409 `LINK_POLICY_CEILING`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateViewPolicyRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewPolicy' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [ViewPolicies]
+      operationId: deleteViewPolicy
+      summary: Xóa chế độ xem (OWNER); không xóa được khi đang được dùng (409 `POLICY_IN_USE`)
+      responses:
+        '204': { description: Đã xóa }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ================================================================== Members
+  /clans/{clanId}/members:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Members]
+      operationId: listMembers
+      summary: Danh sách thành viên (OWNER)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Member' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /clans/{clanId}/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/UserId'
+    patch:
+      tags: [Members]
+      operationId: updateMember
+      summary: Đổi vai trò, chế độ xem, hồ sơ gắn với tài khoản (OWNER)
+      description: |
+        Vai trò chỉ nhận EDITOR hoặc MEMBER. Thay đổi OWNER phải qua chuyển giao (409 `OWNER_TRANSFER_REQUIRED`).
+        Hồ sơ đã gắn với tài khoản khác nhận phản hồi 409 `PERSON_ALREADY_LINKED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMemberRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Member' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [Members]
+      operationId: removeMember
+      summary: Xóa thành viên khỏi dòng họ (OWNER)
+      responses:
+        '204': { description: Đã xóa }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/me/profile:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    put:
+      tags: [Members]
+      operationId: updateOwnProfile
+      summary: Người dùng tự sửa liên hệ và cờ hạn chế trên hồ sơ của chính mình
+      description: Yêu cầu tài khoản đã gắn với hồ sơ; chưa gắn nhận phản hồi 409 `INVALID_STATE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnProfileRequest' }
+      responses:
+        '204': { description: Đã cập nhật }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/person-claims:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Members]
+      operationId: listPersonClaims
+      summary: Yêu cầu nhận hồ sơ (OWNER thấy mọi yêu cầu; người khác thấy yêu cầu của mình)
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ClaimStatus' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PersonClaim' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Members]
+      operationId: createPersonClaim
+      summary: Yêu cầu nhận một hồ sơ là của mình
+      description: Hồ sơ phải nằm trong phạm vi xem của người yêu cầu; mỗi người có tối đa một yêu cầu đang chờ.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePersonClaimRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonClaim' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/person-claims/{claimId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      tags: [Members]
+      operationId: approvePersonClaim
+      summary: Duyệt yêu cầu nhận hồ sơ (OWNER)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionNote' }
+      responses:
+        '204': { description: Đã duyệt; tài khoản được gắn với hồ sơ }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/person-claims/{claimId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      tags: [Members]
+      operationId: rejectPersonClaim
+      summary: Từ chối yêu cầu nhận hồ sơ (OWNER)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionNote' }
+      responses:
+        '204': { description: Đã từ chối }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ================================================================== Invitations
+  /clans/{clanId}/invitations:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Invitations]
+      operationId: listInvitations
+      summary: Danh sách lời mời (OWNER)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Invitation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Invitations]
+      operationId: createInvitation
+      summary: Tạo lời mời và gửi email (OWNER)
+      description: |
+        OWNER mời vai trò EDITOR hoặc MEMBER, chọn được chế độ xem và hồ sơ gắn sẵn.
+        Token chỉ được trả về một lần trong phản hồi này; cơ sở dữ liệu chỉ lưu SHA-256 của token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInvitationRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvitationCreated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/invitations/{invitationId}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - name: invitationId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Invitations]
+      operationId: revokeInvitation
+      summary: Thu hồi lời mời (OWNER)
+      responses:
+        '204': { description: Đã thu hồi }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /invitations/accept:
+    post:
+      tags: [Invitations]
+      operationId: acceptInvitation
+      summary: Chấp nhận lời mời
+      description: Yêu cầu đăng nhập bằng đúng email được mời và email đã xác minh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+      responses:
+        '200':
+          description: Đã tham gia dòng họ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClanSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ================================================================== Ownership
+  /clans/{clanId}/successor:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    put:
+      tags: [Ownership]
+      operationId: setSuccessor
+      summary: Chỉ định hoặc bỏ người kế nhiệm (OWNER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetSuccessorRequest' }
+      responses:
+        '204': { description: Đã cập nhật }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /clans/{clanId}/ownership-transfers:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Ownership]
+      operationId: listOwnershipTransfers
+      summary: Yêu cầu chuyển giao (OWNER, EDITOR, người liên quan)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/OwnershipTransfer' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Ownership]
+      operationId: requestOwnershipTransfer
+      summary: OWNER chủ động chuyển giao cho một thành viên (yêu cầu step-up)
+      description: Người nhận có 7 ngày để chấp nhận. Mỗi dòng họ có tối đa một yêu cầu đang xử lý.
+      parameters:
+        - $ref: '#/components/parameters/XStepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnershipTransfer' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/ownership-transfers/takeover:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    post:
+      tags: [Ownership]
+      operationId: requestTakeover
+      summary: Người kế nhiệm yêu cầu tiếp quản khi OWNER không hoạt động (yêu cầu step-up)
+      description: |
+        Điều kiện: OWNER không hoạt động tối thiểu 180 ngày hoặc bị khóa. OWNER được thông báo qua email;
+        sau 30 ngày chờ, nếu OWNER không từ chối và không hoạt động trở lại, quyền được chuyển giao.
+      parameters:
+        - $ref: '#/components/parameters/XStepUpToken'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReasonRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnershipTransfer' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/ownership-transfers/recovery:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    post:
+      tags: [Ownership]
+      operationId: requestRecovery
+      x-mvp: false
+      summary: "[S04] EDITOR lập đơn khôi phục khi OWNER không hoạt động và không có người kế nhiệm hoạt động"
+      description: |
+        Đơn cần xác nhận của tối thiểu 2/3 số EDITOR trong 14 ngày, sau đó chờ 30 ngày có thông báo tới OWNER,
+        cuối cùng được SUPPORT xét duyệt.
+      parameters:
+        - $ref: '#/components/parameters/XStepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnershipTransfer' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/ownership-transfers/{transferId}/accept:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/TransferId'
+    post:
+      tags: [Ownership]
+      operationId: acceptOwnershipTransfer
+      summary: Người nhận chấp nhận chuyển giao chủ động (yêu cầu step-up)
+      parameters:
+        - $ref: '#/components/parameters/XStepUpToken'
+      responses:
+        '204': { description: Đã chuyển giao; OWNER cũ trở thành EDITOR }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/ownership-transfers/{transferId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/TransferId'
+    post:
+      tags: [Ownership]
+      operationId: rejectOwnershipTransfer
+      summary: Người nhận từ chối chuyển giao chủ động; OWNER từ chối yêu cầu tiếp quản hoặc đơn khôi phục
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionNote' }
+      responses:
+        '204': { description: Đã từ chối }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /clans/{clanId}/ownership-transfers/{transferId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/TransferId'
+    post:
+      tags: [Ownership]
+      operationId: cancelOwnershipTransfer
+      summary: Người tạo yêu cầu hủy yêu cầu
+      responses:
+        '204': { description: Đã hủy }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/ownership-transfers/{transferId}/endorse:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/TransferId'
+    post:
+      tags: [Ownership]
+      operationId: endorseRecovery
+      x-mvp: false
+      summary: "[S04] EDITOR xác nhận đơn khôi phục"
+      responses:
+        '204': { description: Đã xác nhận }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ================================================================== Persons
+  /clans/{clanId}/persons:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Persons]
+      operationId: searchPersons
+      summary: Tìm kiếm người trong phạm vi (không áp dụng cho khách)
+      parameters:
+        - name: q
+          in: query
+          description: Tìm theo họ tên, không phân biệt dấu ("nguyen van duc" khớp "Nguyễn Văn Đức")
+          schema: { type: string, maxLength: 100 }
+        - name: generation
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: living
+          in: query
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [name, generation, -generation]
+            default: name
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Persons]
+      operationId: createPerson
+      summary: Thêm người (OWNER, EDITOR)
+      description: |
+        Thuộc tính `link` gắn người mới vào cây trong cùng transaction. Thuộc tính này bắt buộc đối với
+        EDITOR có phạm vi giới hạn, do người chưa được gắn vào cây nằm ngoài phạm vi của EDITOR.
+        Yêu cầu chứa trường thuộc nhóm trường mà người gửi không được xem (ví dụ EDITOR gửi `nationalId`)
+        nhận phản hồi 403 `FIELD_NOT_PERMITTED`. Vượt hạn mức số người nhận phản hồi 402 `QUOTA_EXCEEDED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePersonRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonDetail' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/persons/{personId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/PersonId'
+    get:
+      tags: [Persons]
+      operationId: getPerson
+      summary: Hồ sơ một người (đã ẩn trường theo nhóm trường của người xem)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonDetail' }
+              examples:
+                member-view-living:
+                  summary: MEMBER với nhóm BASIC, LIFE_EVENTS, BIOGRAPHY xem người còn sống
+                  value:
+                    id: 10000000-0000-0000-0000-000000000031
+                    fullName: Nguyễn Văn Đức
+                    gender: MALE
+                    generation: 3
+                    isLiving: true
+                    birth:
+                      solar: { precision: YEAR, year: 1975, approximate: false }
+                      lunar: { precision: YEAR, year: 1975, leapMonth: false, approximate: false, canChi: Ất Mão }
+                    death:
+                      solar: { precision: UNKNOWN, approximate: false }
+                      lunar: { precision: UNKNOWN, leapMonth: false, approximate: false }
+                    hasPhoto: false
+                    otherNames: null
+                    birthPlace: Nam Định
+                    occupation: Kỹ sư
+                    biography: null
+                    relatives:
+                      parents:
+                        - { id: 10000000-0000-0000-0000-000000000021, fullName: Nguyễn Văn Bình, gender: MALE }
+                      spouses: []
+                      children: []
+                    version: 4
+                    redactedFields: [birth.solar.month, birth.solar.day, birth.lunar.month, birth.lunar.day,
+                                     currentAddress, phone, email, nationalId, privateNote, isRestricted]
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Persons]
+      operationId: updatePerson
+      summary: Sửa hồ sơ (OWNER, EDITOR trong phạm vi)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePersonRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [Persons]
+      operationId: deletePerson
+      summary: Xóa người (OWNER; chỉ khi không còn quan hệ nào)
+      responses:
+        '204': { description: Đã xóa }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/persons/{personId}/photo:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/PersonId'
+    get:
+      tags: [Persons]
+      operationId: getPersonPhoto
+      summary: Ảnh chân dung (yêu cầu nhóm trường BIOGRAPHY)
+      responses:
+        '200':
+          description: Ảnh
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Persons]
+      operationId: uploadPersonPhoto
+      summary: Tải ảnh lên (OWNER, EDITOR trong phạm vi)
+      description: |
+        Kích thước tối đa 5 MB; định dạng JPEG, PNG hoặc WebP, xác định theo nội dung tệp (magic bytes),
+        không dựa vào Content-Type hay phần mở rộng. Ảnh được giải mã và mã hóa lại (loại bỏ EXIF/GPS) trước khi lưu.
+        Vượt dung lượng của gói nhận phản hồi 402 `QUOTA_EXCEEDED`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '204': { description: Đã lưu }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+    delete:
+      tags: [Persons]
+      operationId: deletePersonPhoto
+      summary: Xóa ảnh
+      responses:
+        '204': { description: Đã xóa }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /clans/{clanId}/persons/{personId}/kinship/{otherPersonId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/PersonId'
+      - name: otherPersonId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Persons]
+      operationId: getKinship
+      summary: "[S02] Quan hệ họ hàng giữa hai người (gói có tính năng kinship)"
+      x-mvp: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KinshipResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ================================================================== Unions
+  /clans/{clanId}/unions:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    post:
+      tags: [Unions]
+      operationId: createUnion
+      summary: Tạo hôn phối (hoặc gia đình một bên khi không rõ cha hoặc mẹ)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUnionRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Union' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/unions/{unionId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/UnionId'
+    get:
+      tags: [Unions]
+      operationId: getUnion
+      summary: Xem một hôn phối
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Union' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Unions]
+      operationId: updateUnion
+      summary: Sửa hôn phối
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUnionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Union' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [Unions]
+      operationId: deleteUnion
+      summary: Xóa hôn phối (chỉ khi không còn con gắn vào)
+      responses:
+        '204': { description: Đã xóa }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /clans/{clanId}/unions/{unionId}/children:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/UnionId'
+    post:
+      tags: [Unions]
+      operationId: addChild
+      summary: Gắn một người làm con của hôn phối
+      description: |
+        409 `ANCESTRY_CYCLE` khi tạo quan hệ tổ tiên vòng; 409 `DUPLICATE_BIOLOGICAL_FAMILY` khi người này
+        đã có gia đình đẻ.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddChildRequest' }
+      responses:
+        '201':
+          description: Đã gắn
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnionChild' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/unions/{unionId}/children/{childId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/UnionId'
+      - name: childId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Unions]
+      operationId: updateChild
+      summary: Sửa quan hệ con (đẻ hoặc nuôi, thứ tự sinh)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateChildRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnionChild' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Unions]
+      operationId: removeChild
+      summary: Gỡ người con khỏi hôn phối
+      responses:
+        '204': { description: Đã gỡ }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ================================================================== Tree
+  /clans/{clanId}/tree:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Tree]
+      operationId: getTree
+      summary: Cây gia phả dạng danh sách phẳng (persons + unions)
+      description: |
+        Trả về danh sách phẳng gồm `persons` và `unions` (mỗi union kèm danh sách con); client chịu trách nhiệm
+        dựng bố cục. Dữ liệu không trả về dạng cây lồng nhau do một người có thể thuộc nhiều hôn phối.
+
+        - Khi không truyền `rootPersonId`: dùng người gốc trong phạm vi của người gọi, nếu không có thì dùng thủy tổ.
+        - Chỉ chứa người trong phạm vi; union chỉ chứa con trong phạm vi; partner ngoài phạm vi có giá trị `null`.
+        - Khi vượt 5.000 người: kết quả được cắt theo đời và `truncated` có giá trị `true`.
+        - Thuộc tính của `TreePerson` phụ thuộc nhóm trường của người xem.
+        - Phản hồi có header `ETag`; client gửi `If-None-Match` để nhận 304 khi dữ liệu không đổi.
+      parameters:
+        - name: rootPersonId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: depthDown
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 30, default: 4 }
+        - name: depthUp
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 30, default: 0 }
+        - name: includeSpouses
+          in: query
+          schema: { type: boolean, default: true }
+        - name: If-None-Match
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TreeResponse' }
+              examples:
+                small-tree:
+                  summary: Ông có hai vợ, một con nuôi
+                  value:
+                    rootPersonId: 10000000-0000-0000-0000-000000000011
+                    depthDown: 2
+                    depthUp: 0
+                    truncated: false
+                    persons:
+                      - { id: 10000000-0000-0000-0000-000000000011, fullName: Nguyễn Văn An, gender: MALE, generation: 1, isLiving: false,
+                          lifespan: "1890 – 1952" }
+                      - { id: 10000000-0000-0000-0000-000000000012, fullName: Trần Thị Bé, gender: FEMALE, generation: 1, isLiving: false,
+                          lifespan: "khoảng 1895 – Chưa rõ" }
+                      - { id: 10000000-0000-0000-0000-000000000013, fullName: Lê Thị Cúc, gender: FEMALE, generation: 1, isLiving: false,
+                          lifespan: "Chưa rõ" }
+                      - { id: 10000000-0000-0000-0000-000000000021, fullName: Nguyễn Văn Bình, gender: MALE, generation: 2, isLiving: false,
+                          lifespan: "1920 – 1990" }
+                      - { id: 10000000-0000-0000-0000-000000000022, fullName: Nguyễn Thị Chi, gender: FEMALE, generation: 2, isLiving: true,
+                          lifespan: "1960" }
+                      - { id: 10000000-0000-0000-0000-000000000023, fullName: Nguyễn Văn Dũng, gender: MALE, generation: 2, isLiving: true,
+                          lifespan: "1965" }
+                    unions:
+                      - id: 20000000-0000-0000-0000-000000000001
+                        partnerAId: 10000000-0000-0000-0000-000000000011
+                        partnerBId: 10000000-0000-0000-0000-000000000012
+                        partnerAOrder: 1
+                        partnerBOrder: 1
+                        status: WIDOWED
+                        children:
+                          - { childId: 10000000-0000-0000-0000-000000000021, birthOrder: 1 }
+                      - id: 20000000-0000-0000-0000-000000000002
+                        partnerAId: 10000000-0000-0000-0000-000000000011
+                        partnerBId: 10000000-0000-0000-0000-000000000013
+                        partnerAOrder: 2
+                        partnerBOrder: 1
+                        status: MARRIED
+                        children:
+                          - { childId: 10000000-0000-0000-0000-000000000022, birthOrder: 1 }
+                          - { childId: 10000000-0000-0000-0000-000000000023, birthOrder: 2, relation: ADOPTED }
+        '304': { description: Dữ liệu không đổi }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ================================================================== Share links
+  /clans/{clanId}/share-links:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [ShareLinks]
+      operationId: listShareLinks
+      summary: Danh sách link chia sẻ (OWNER)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ShareLink' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [ShareLinks]
+      operationId: createShareLink
+      summary: Tạo link chia sẻ (OWNER)
+      description: |
+        Link dùng một chế độ xem có phạm vi CLAN hoặc BRANCH và chỉ gồm nhóm trường trong trần của link
+        (BASIC, LIFE_EVENTS, BIOGRAPHY); vi phạm nhận phản hồi 409 `LINK_POLICY_CEILING`.
+        `expiresAt` có giá trị `null` tạo link không thời hạn. Bất kỳ ai có link đều xem được, không cần đăng nhập.
+        Token (32 byte ngẫu nhiên, mã hóa base64url) chỉ được trả về một lần và đặt sau ký tự `#` của URL
+        (`https://<host>/s#<token>`), do đó không được trình duyệt gửi lên máy chủ và không xuất hiện trong log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateShareLinkRequest' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareLinkCreated' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /clans/{clanId}/share-links/{shareLinkId}:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/ShareLinkId'
+    patch:
+      tags: [ShareLinks]
+      operationId: updateShareLink
+      summary: Sửa nhãn, chế độ xem, thời hạn của link (OWNER); token giữ nguyên
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateShareLinkRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareLink' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [ShareLinks]
+      operationId: deleteShareLink
+      summary: Xóa link (OWNER); link mất hiệu lực tức thời, bản ghi được giữ cho audit
+      responses:
+        '204': { description: Đã xóa }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /clans/{clanId}/share-links/{shareLinkId}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+      - $ref: '#/components/parameters/ShareLinkId'
+    post:
+      tags: [ShareLinks]
+      operationId: revokeShareLink
+      summary: Thu hồi link (OWNER); phiên khách đang mở mất quyền từ yêu cầu kế tiếp
+      responses:
+        '204': { description: Đã thu hồi }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /shared/sessions:
+    post:
+      tags: [ShareLinks]
+      operationId: startGuestSession
+      summary: Đổi token link lấy access token khách (30 phút)
+      description: Giới hạn 10 yêu cầu/phút/IP. Token sai, hết hạn, đã thu hồi hoặc đã xóa nhận cùng phản hồi 404.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GuestSessionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ================================================================== Export
+  /clans/{clanId}/exports/persons:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Export]
+      operationId: exportPersons
+      summary: Xuất Excel (OWNER; gói có tính năng xuất Excel)
+      description: |
+        Áp dụng cùng bộ lọc phạm vi và quy tắc ẩn trường với `getPerson`. Ô có nội dung bắt đầu bằng
+        `=`, `+`, `-`, `@`, tab hoặc CR được thêm tiền tố `'`. Mỗi lần xuất ghi audit `EXPORT_PERSONS`.
+      responses:
+        '200':
+          description: Tệp Excel
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="gia-pha-2026-10-14.xlsx"' }
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ================================================================== Audit
+  /clans/{clanId}/audit-logs:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    get:
+      tags: [Audit]
+      operationId: listAuditLogs
+      summary: Nhật ký (OWNER); thời gian lưu theo gói
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: action
+          in: query
+          schema: { $ref: '#/components/schemas/AuditAction' }
+        - name: actorUserId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ================================================================== Calendar
+  /calendar/solar-to-lunar:
+    get:
+      tags: [Calendar]
+      operationId: solarToLunar
+      summary: Đổi ngày dương lịch sang âm lịch (lịch Việt Nam, UTC+7)
+      description: Phục vụ chức năng "Tự tính" trên biểu mẫu nhập ngày. Kết quả được cache.
+      parameters:
+        - { name: year, in: query, required: true, schema: { type: integer, minimum: 1800, maximum: 2199 } }
+        - { name: month, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 12 } }
+        - { name: day, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 31 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LunarDate' }
+              example: { precision: DAY, year: 2026, month: 1, day: 1, leapMonth: false, approximate: false, canChi: Bính Ngọ }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /calendar/lunar-to-solar:
+    get:
+      tags: [Calendar]
+      operationId: lunarToSolar
+      summary: Đổi ngày âm lịch sang dương lịch (lịch Việt Nam, UTC+7)
+      description: Phục vụ chức năng "Tự tính" trên biểu mẫu nhập ngày. Kết quả được cache.
+      parameters:
+        - { name: year, in: query, required: true, schema: { type: integer, minimum: 1800, maximum: 2199 } }
+        - { name: month, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 12 } }
+        - { name: day, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 30 } }
+        - { name: leapMonth, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolarDate' }
+              example: { precision: DAY, year: 2026, month: 2, day: 17, approximate: false }
+        '422':
+          description: Ngày âm lịch không tồn tại (tháng nhuận không có trong năm, hoặc tháng chỉ có 29 ngày)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  # ================================================================== Admin
+  /admin/clans:
+    get:
+      tags: [Admin]
+      operationId: adminListClans
+      summary: Danh sách dòng họ, chỉ siêu dữ liệu (SYSTEM_ADMIN, SUPPORT)
+      parameters:
+        - { name: q, in: query, description: Tìm theo tên dòng họ hoặc email OWNER, schema: { type: string, maxLength: 100 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdminClan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/clans/{clanId}/status:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    put:
+      tags: [Admin]
+      operationId: adminSetClanStatus
+      summary: Tạm ngưng hoặc kích hoạt lại dòng họ (SYSTEM_ADMIN)
+      description: Dòng họ bị tạm ngưng không truy cập được dữ liệu, kể cả OWNER và link chia sẻ; OWNER vẫn thấy trạng thái.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetClanStatusRequest' }
+      responses:
+        '204': { description: Đã cập nhật }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/clans/{clanId}/subscription:
+    parameters:
+      - $ref: '#/components/parameters/ClanId'
+    put:
+      tags: [Admin]
+      operationId: adminGrantSubscription
+      summary: Cấp hoặc điều chỉnh gói thủ công (SYSTEM_ADMIN), dùng cho hỗ trợ và hoàn tiền
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrantSubscriptionRequest' }
+      responses:
+        '204': { description: Đã cập nhật }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      operationId: adminListUsers
+      summary: Tìm tài khoản (SYSTEM_ADMIN, SUPPORT)
+      parameters:
+        - { name: q, in: query, description: Tìm theo email hoặc tên hiển thị, schema: { type: string, maxLength: 100 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdminUser' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users/{userId}/status:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [Admin]
+      operationId: adminSetUserStatus
+      summary: Khóa hoặc mở khóa tài khoản (SYSTEM_ADMIN); khóa thu hồi mọi refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetUserStatusRequest' }
+      responses:
+        '204': { description: Đã cập nhật }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/plans:
+    get:
+      tags: [Admin]
+      operationId: adminListPlans
+      summary: Danh sách gói, kể cả gói không bán (SYSTEM_ADMIN)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Plan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/plans/{planCode}:
+    parameters:
+      - name: planCode
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[A-Z][A-Z0-9_]{1,31}$' }
+    put:
+      tags: [Admin]
+      operationId: adminUpsertPlan
+      summary: Tạo hoặc sửa gói (SYSTEM_ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Plan' }
+      responses:
+        '204': { description: Đã lưu }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /admin/settings:
+    get:
+      tags: [Admin]
+      operationId: adminListSettings
+      summary: Cấu hình hệ thống (SYSTEM_ADMIN)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SystemSetting' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/settings/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Admin]
+      operationId: adminSetSetting
+      summary: Sửa một cấu hình hệ thống (SYSTEM_ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: integer, minimum: 0 }
+      responses:
+        '204': { description: Đã lưu }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/ownership-reviews:
+    get:
+      tags: [Admin]
+      operationId: adminListOwnershipReviews
+      x-mvp: false
+      summary: "[S04] Đơn khôi phục quyền trưởng tộc chờ duyệt (SYSTEM_ADMIN, SUPPORT)"
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PendingReview' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/ownership-reviews/{transferId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/TransferId'
+    post:
+      tags: [Admin]
+      operationId: adminApproveRecovery
+      x-mvp: false
+      summary: "[S04] Duyệt đơn khôi phục (SYSTEM_ADMIN, SUPPORT)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequiredDecisionNote' }
+      responses:
+        '204': { description: Đã duyệt; quyền được chuyển giao }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/ownership-reviews/{transferId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/TransferId'
+    post:
+      tags: [Admin]
+      operationId: adminRejectRecovery
+      x-mvp: false
+      summary: "[S04] Từ chối đơn khôi phục (SYSTEM_ADMIN, SUPPORT)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequiredDecisionNote' }
+      responses:
+        '204': { description: Đã từ chối }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      operationId: adminListAuditLogs
+      summary: Nhật ký thao tác quản trị (SYSTEM_ADMIN)
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdminAuditEntry' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token có hiệu lực 15 phút (người dùng) hoặc 30 phút (khách). Claims: `sub` (userId hoặc
+        shareLinkId), `typ` (`user` hoặc `guest`); token khách có thêm `cid` (clanId). Vai trò hệ thống và
+        vai trò trong dòng họ không nằm trong token mà được đọc từ cơ sở dữ liệu ở mỗi yêu cầu.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: gp_refresh
+
+  parameters:
+    ClanId:
+      name: clanId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PersonId:
+      name: personId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UnionId:
+      name: unionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ShareLinkId:
+      name: shareLinkId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ClaimId:
+      name: claimId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TransferId:
+      name: transferId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    XRequestedWith:
+      name: X-Requested-With
+      in: header
+      required: true
+      schema: { type: string, const: XMLHttpRequest }
+    XStepUpToken:
+      name: X-Step-Up-Token
+      in: header
+      required: true
+      description: Token nhận từ `/auth/step-up/verify`, hiệu lực 5 phút, dùng một lần
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Chưa xác thực hoặc token không hợp lệ
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PaymentRequired:
+      description: Vượt hạn mức hoặc tính năng không thuộc gói hiện tại
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: about:blank
+            title: Payment Required
+            status: 402
+            code: QUOTA_EXCEEDED
+            detail: Gói hiện tại cho phép tối đa 300 người.
+            quota: { resource: PERSONS, limit: 300 }
+    Forbidden:
+      description: Không có quyền thực hiện hành động trên tài nguyên
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Tài nguyên không tồn tại, thuộc dòng họ khác hoặc nằm ngoài phạm vi xem
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: about:blank
+            title: Not Found
+            status: 404
+            code: NOT_FOUND
+    Conflict:
+      description: Xung đột trạng thái
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: about:blank
+            title: Conflict
+            status: 409
+            code: VERSION_CONFLICT
+            detail: Hồ sơ đã được người khác sửa. Tải lại để xem bản mới nhất.
+    ValidationFailed:
+      description: Dữ liệu không hợp lệ
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: about:blank
+            title: Unprocessable Content
+            status: 422
+            code: VALIDATION_FAILED
+            errors:
+              - { field: birth.solar.day, code: INVALID_DATE, message: Tháng 2 năm 1990 không có ngày 30 }
+    PayloadTooLarge:
+      description: Tệp quá lớn
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedMediaType:
+      description: Định dạng tệp không được hỗ trợ
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: Vượt giới hạn tần suất
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    # ---------- Lỗi
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_FAILED
+        - UNAUTHENTICATED
+        - INVALID_CREDENTIALS
+        - EMAIL_NOT_VERIFIED
+        - STEP_UP_REQUIRED
+        - FORBIDDEN
+        - FIELD_NOT_PERMITTED
+        - NOT_FOUND
+        - VERSION_CONFLICT
+        - INVALID_STATE
+        - EMAIL_TAKEN
+        - INVALID_TOKEN
+        - INVITATION_EMAIL_MISMATCH
+        - ALREADY_MEMBER
+        - PERSON_ALREADY_LINKED
+        - OWNER_TRANSFER_REQUIRED
+        - TRANSFER_IN_PROGRESS
+        - ANCESTRY_CYCLE
+        - DUPLICATE_BIOLOGICAL_FAMILY
+        - DUPLICATE_UNION
+        - HAS_RELATIONS
+        - LAST_OWNER
+        - POLICY_IN_USE
+        - LINK_POLICY_CEILING
+        - DATE_CALENDAR_MISMATCH
+        - QUOTA_EXCEEDED
+        - FEATURE_NOT_IN_PLAN
+        - PLAN_NOT_PURCHASABLE
+        - FILE_TOO_LARGE
+        - UNSUPPORTED_MEDIA_TYPE
+        - RATE_LIMITED
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, default: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        quota:
+          type: object
+          description: Có mặt với QUOTA_EXCEEDED
+          properties:
+            resource: { type: string, enum: [PERSONS, MEMBERS, SHARE_LINKS, VIEW_POLICIES, STORAGE] }
+            limit: { type: integer }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, code, message]
+            properties:
+              field: { type: string, description: 'Đường dẫn trường, ví dụ birth.lunar.day' }
+              code: { type: string }
+              message: { type: string }
+
+    # ---------- Enum
+    ClanRole:
+      type: string
+      enum: [OWNER, EDITOR, MEMBER]
+    AssignableRole:
+      type: string
+      enum: [EDITOR, MEMBER]
+    PrincipalRole:
+      type: string
+      enum: [OWNER, EDITOR, MEMBER, GUEST]
+    SystemRole:
+      type: string
+      enum: [SYSTEM_ADMIN, SUPPORT]
+    ClanStatus:
+      type: string
+      enum: [ACTIVE, SUSPENDED]
+    UserStatus:
+      type: string
+      enum: [ACTIVE, LOCKED]
+    Gender:
+      type: string
+      enum: [MALE, FEMALE, UNKNOWN]
+    DatePrecision:
+      type: string
+      description: UNKNOWN hiển thị là "Chưa rõ"
+      enum: [UNKNOWN, YEAR, MONTH, DAY]
+    UnionStatus:
+      type: string
+      enum: [MARRIED, DIVORCED, WIDOWED, UNKNOWN]
+    ChildRelation:
+      type: string
+      enum: [BIOLOGICAL, ADOPTED]
+    FieldGroup:
+      type: string
+      description: Nhóm trường thông tin; ánh xạ trường – nhóm tại GP-DOC-03 mục 4.
+      enum: [BASIC, LIFE_EVENTS, BIOGRAPHY, LIVING_BIRTH_DATE, CONTACT, ADOPTION, IDENTITY_DOCS]
+    ScopeMode:
+      type: string
+      description: CLAN toàn bộ dòng họ; BRANCH từ người gốc cố định; RELATIVE từ hồ sơ của chính người xem.
+      enum: [CLAN, BRANCH, RELATIVE]
+    ClaimStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED, CANCELED]
+    TransferKind:
+      type: string
+      enum: [VOLUNTARY, SUCCESSOR, RECOVERY]
+    TransferStatus:
+      type: string
+      enum: [PENDING_ACCEPTANCE, PENDING_ENDORSEMENT, WAITING_PERIOD, PENDING_REVIEW, COMPLETED, CANCELED, REJECTED, EXPIRED]
+    PaymentStatus:
+      type: string
+      enum: [PENDING, SUCCEEDED, FAILED, EXPIRED]
+    AuditAction:
+      type: string
+      enum:
+        - CLAN_CREATE
+        - CLAN_UPDATE
+        - CLAN_STATUS_SET_BY_ADMIN
+        - PERSON_CREATE
+        - PERSON_UPDATE
+        - PERSON_DELETE
+        - PERSON_VIEW_SENSITIVE
+        - PERSON_SELF_UPDATE
+        - PERSON_CLAIM_CREATE
+        - PERSON_CLAIM_APPROVE
+        - PERSON_CLAIM_REJECT
+        - UNION_CREATE
+        - UNION_UPDATE
+        - UNION_DELETE
+        - CHILD_ADD
+        - CHILD_UPDATE
+        - CHILD_REMOVE
+        - VIEW_POLICY_CREATE
+        - VIEW_POLICY_UPDATE
+        - VIEW_POLICY_DELETE
+        - MEMBER_UPDATE
+        - MEMBER_REMOVE
+        - INVITATION_CREATE
+        - INVITATION_REVOKE
+        - INVITATION_ACCEPT
+        - SHARE_LINK_CREATE
+        - SHARE_LINK_UPDATE
+        - SHARE_LINK_REVOKE
+        - SHARE_LINK_DELETE
+        - GUEST_SESSION_START
+        - EXPORT_PERSONS
+        - SUCCESSOR_SET
+        - OWNERSHIP_TRANSFER_REQUEST
+        - OWNERSHIP_TAKEOVER_REQUEST
+        - OWNERSHIP_RECOVERY_REQUEST
+        - OWNERSHIP_RECOVERY_ENDORSE
+        - OWNERSHIP_TRANSFER_COMPLETE
+        - OWNERSHIP_TRANSFER_CANCEL
+        - OWNERSHIP_TRANSFER_REJECT
+        - PAYMENT_CREATE
+        - PAYMENT_SUCCEEDED
+        - PAYMENT_FAILED
+        - SUBSCRIPTION_GRANT_BY_ADMIN
+
+    # ---------- Ngày gia phả
+    SolarDate:
+      type: object
+      description: |
+        Ngày dương lịch với độ chính xác thay đổi. UNKNOWN: không có year, month, day. YEAR: chỉ có year.
+        MONTH: có year và month. DAY: có đủ ba thuộc tính và phải là ngày tồn tại trên lịch.
+        Trong yêu cầu, đối tượng vắng mặt được hiểu là UNKNOWN.
+      required: [precision]
+      properties:
+        precision: { $ref: '#/components/schemas/DatePrecision' }
+        year: { type: [integer, 'null'], minimum: 1, maximum: 9999 }
+        month: { type: [integer, 'null'], minimum: 1, maximum: 12 }
+        day: { type: [integer, 'null'], minimum: 1, maximum: 31 }
+        approximate: { type: boolean, default: false, description: 'Giá trị ước lượng ("khoảng"); không áp dụng cho UNKNOWN' }
+    LunarDate:
+      type: object
+      description: |
+        Ngày âm lịch Việt Nam, áp dụng quy tắc độ chính xác như SolarDate; `day` tối đa 30;
+        `leapMonth` chỉ áp dụng cho mức MONTH và DAY.
+      required: [precision]
+      properties:
+        precision: { $ref: '#/components/schemas/DatePrecision' }
+        year: { type: [integer, 'null'], minimum: 1, maximum: 9999 }
+        month: { type: [integer, 'null'], minimum: 1, maximum: 12 }
+        day: { type: [integer, 'null'], minimum: 1, maximum: 30 }
+        leapMonth: { type: boolean, default: false }
+        approximate: { type: boolean, default: false }
+        canChi:
+          type: string
+          readOnly: true
+          description: Can chi của năm âm lịch, chỉ có trong phản hồi khi năm được xác định (ví dụ "Canh Dần")
+    EventDate:
+      type: object
+      description: |
+        Một sự kiện (sinh, mất) gồm hai giá trị độc lập: dương lịch và âm lịch.
+        Giao diện cung cấp nút "Tự tính" điền giá trị còn lại qua `/calendar/solar-to-lunar` hoặc
+        `/calendar/lunar-to-solar`; nút chỉ được bật khi giá trị đã nhập có `precision: DAY`.
+        Client không cài đặt thuật toán quy đổi.
+        Backend kiểm tra sự nhất quán giữa hai giá trị: mỗi giá trị biểu diễn một khoảng ngày dương lịch
+        (DAY là một ngày, MONTH là cả tháng, YEAR là cả năm; âm lịch quy đổi theo lịch Việt Nam);
+        hai khoảng phải giao nhau, nếu không phản hồi 422 `DATE_CALENDAR_MISMATCH`. Khi cả hai ở mức DAY,
+        hai ngày phải trùng nhau hoàn toàn, bao gồm cờ tháng nhuận. Không kiểm tra khi một giá trị là UNKNOWN
+        hoặc có `approximate`. Chi tiết tại GP-DOC-02 mục 5.3.
+      properties:
+        solar: { $ref: '#/components/schemas/SolarDate' }
+        lunar: { $ref: '#/components/schemas/LunarDate' }
+
+    # ---------- Auth
+    RegisterRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 10, maxLength: 128, writeOnly: true }
+        displayName: { type: string, minLength: 1, maxLength: 100 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, writeOnly: true }
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    ResetPasswordRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token: { type: string, minLength: 43, maxLength: 64 }
+        newPassword: { type: string, minLength: 10, maxLength: 128, writeOnly: true }
+    StepUpRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, writeOnly: true }
+    StepUpChallenge:
+      type: object
+      required: [challengeId, expiresIn]
+      properties:
+        challengeId: { type: string, format: uuid }
+        expiresIn: { type: integer, description: Giây }
+    StepUpVerifyRequest:
+      type: object
+      required: [challengeId, code]
+      properties:
+        challengeId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+    StepUpToken:
+      type: object
+      required: [stepUpToken, expiresIn]
+      properties:
+        stepUpToken: { type: string }
+        expiresIn: { type: integer, description: Giây }
+    TokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 43, maxLength: 64 }
+    TokenResponse:
+      type: object
+      required: [accessToken, tokenType, expiresIn]
+      properties:
+        accessToken: { type: string }
+        tokenType: { type: string, const: Bearer }
+        expiresIn: { type: integer, description: Giây }
+    GuestSessionResponse:
+      type: object
+      required: [accessToken, expiresIn, clan]
+      properties:
+        accessToken: { type: string }
+        expiresIn: { type: integer }
+        clan: { $ref: '#/components/schemas/ClanRef' }
+        rootPersonId: { type: [string, 'null'], format: uuid }
+    UserProfile:
+      type: object
+      required: [id, email, displayName, emailVerified, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        emailVerified: { type: boolean }
+        systemRole:
+          oneOf:
+            - $ref: '#/components/schemas/SystemRole'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+    UserRef:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+
+    # ---------- Plans & payments
+    Plan:
+      type: object
+      required: [code, name, priceVndPerMonth, limits, features, auditRetentionDays, isPurchasable]
+      properties:
+        code: { type: string, pattern: '^[A-Z][A-Z0-9_]{1,31}$', example: STANDARD }
+        name: { type: string, example: Tiêu chuẩn }
+        priceVndPerMonth: { type: integer, minimum: 0, example: 49000 }
+        limits: { $ref: '#/components/schemas/PlanLimits' }
+        features: { $ref: '#/components/schemas/PlanFeatures' }
+        auditRetentionDays: { type: integer, minimum: 1 }
+        isPurchasable: { type: boolean }
+        sortOrder: { type: integer }
+    PlanLimits:
+      type: object
+      required: [persons, members, shareLinks, viewPolicies, storageMb]
+      properties:
+        persons: { type: integer }
+        members: { type: integer }
+        shareLinks: { type: integer }
+        viewPolicies: { type: integer }
+        storageMb: { type: integer }
+    PlanFeatures:
+      type: object
+      required: [exportExcel, importExcel, kinship]
+      properties:
+        exportExcel: { type: boolean }
+        importExcel: { type: boolean }
+        kinship: { type: boolean }
+    Entitlements:
+      type: object
+      required: [plan, limits, features, usage, auditRetentionDays]
+      properties:
+        plan:
+          type: object
+          required: [code, name]
+          properties:
+            code: { type: string }
+            name: { type: string }
+        currentPeriodEnd: { type: [string, 'null'], format: date-time, description: '`null`: không thời hạn' }
+        limits: { $ref: '#/components/schemas/PlanLimits' }
+        features: { $ref: '#/components/schemas/PlanFeatures' }
+        auditRetentionDays: { type: integer }
+        usage:
+          type: object
+          required: [persons, members, shareLinks, viewPolicies, storageBytes]
+          properties:
+            persons: { type: integer }
+            members: { type: integer }
+            shareLinks: { type: integer }
+            viewPolicies: { type: integer }
+            storageBytes: { type: integer }
+    CreatePaymentRequest:
+      type: object
+      required: [planCode, months]
+      properties:
+        planCode: { type: string }
+        months: { type: integer, enum: [1, 6, 12] }
+    Payment:
+      type: object
+      required: [id, planCode, months, amountVnd, status, provider, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        planCode: { type: string }
+        months: { type: integer }
+        amountVnd: { type: integer }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        provider: { type: string, const: VNPAY }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+    PaymentCreated:
+      type: object
+      required: [payment, paymentUrl]
+      properties:
+        payment: { $ref: '#/components/schemas/Payment' }
+        paymentUrl: { type: string, format: uri, description: URL thanh toán VNPay đã ký; có hiệu lực 15 phút }
+    VnpayIpnResponse:
+      type: object
+      required: [RspCode, Message]
+      properties:
+        RspCode: { type: string, enum: ['00', '01', '02', '04', '97', '99'] }
+        Message: { type: string }
+
+    # ---------- Clan
+    ClanRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+    ClanSummary:
+      type: object
+      required: [id, name, status, myRole]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        originPlace: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/ClanStatus' }
+        myRole: { $ref: '#/components/schemas/ClanRole' }
+    MyAccess:
+      type: object
+      description: Quyền hiệu lực của người xem trong dòng họ
+      required: [role, scopeMode, fieldGroups]
+      properties:
+        role: { $ref: '#/components/schemas/PrincipalRole' }
+        scopeMode: { $ref: '#/components/schemas/ScopeMode' }
+        fieldGroups:
+          type: array
+          items: { $ref: '#/components/schemas/FieldGroup' }
+        linkedPersonId: { type: [string, 'null'], format: uuid }
+        isSuccessor: { type: boolean }
+    Clan:
+      type: object
+      required: [id, name, status, myAccess, createdAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        originPlace: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/ClanStatus' }
+        rootPersonId: { type: [string, 'null'], format: uuid, description: Thủy tổ }
+        defaultMemberPolicyId: { type: [string, 'null'], format: uuid, description: Chỉ hiển thị với OWNER }
+        successorUserId: { type: [string, 'null'], format: uuid, description: Chỉ hiển thị với OWNER và EDITOR }
+        myAccess: { $ref: '#/components/schemas/MyAccess' }
+        createdAt: { type: string, format: date-time }
+        version: { type: integer }
+    CreateClanRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: [string, 'null'], maxLength: 5000 }
+        originPlace: { type: [string, 'null'], maxLength: 500 }
+    UpdateClanRequest:
+      type: object
+      required: [version]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: [string, 'null'], maxLength: 5000 }
+        originPlace: { type: [string, 'null'], maxLength: 500 }
+        rootPersonId: { type: [string, 'null'], format: uuid }
+        defaultMemberPolicyId: { type: string, format: uuid }
+        version: { type: integer }
+    SetSuccessorRequest:
+      type: object
+      required: [userId]
+      properties:
+        userId: { type: [string, 'null'], format: uuid, description: '`null` để bỏ chỉ định' }
+
+    # ---------- View policies
+    ViewPolicyInput:
+      type: object
+      description: |
+        CLAN: không có rootPersonId, depthDown, depthUp. BRANCH: bắt buộc rootPersonId, depthDown, depthUp.
+        RELATIVE: không có rootPersonId; bắt buộc depthDown, depthUp; áp dụng cho thành viên đã gắn hồ sơ.
+        `fieldGroups` bắt buộc chứa BASIC và không chứa IDENTITY_DOCS.
+      required: [name, scopeMode, fieldGroups]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        scopeMode: { $ref: '#/components/schemas/ScopeMode' }
+        rootPersonId: { type: [string, 'null'], format: uuid }
+        depthDown: { type: [integer, 'null'], minimum: 0, maximum: 50 }
+        depthUp: { type: [integer, 'null'], minimum: 0, maximum: 50 }
+        includeSpouses: { type: boolean, default: true }
+        fieldGroups:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/FieldGroup' }
+    UpdateViewPolicyRequest:
+      allOf:
+        - $ref: '#/components/schemas/ViewPolicyInput'
+        - type: object
+          required: [version]
+          properties:
+            version: { type: integer }
+    ViewPolicy:
+      allOf:
+        - $ref: '#/components/schemas/ViewPolicyInput'
+        - type: object
+          required: [id, usage, version]
+          properties:
+            id: { type: string, format: uuid }
+            usage:
+              type: object
+              required: [isClanDefault, members, shareLinks]
+              properties:
+                isClanDefault: { type: boolean }
+                members: { type: integer, description: Số thành viên đang dùng chế độ xem này làm chế độ riêng }
+                shareLinks: { type: integer, description: Số link chưa xóa đang dùng }
+            linkEligible: { type: boolean, description: Có thể dùng cho link chia sẻ (không vượt trần) }
+            version: { type: integer }
+
+    # ---------- Members, claims, invitations
+    Member:
+      type: object
+      required: [user, email, role, joinedAt, version]
+      properties:
+        user: { $ref: '#/components/schemas/UserRef' }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/ClanRole' }
+        personId: { type: [string, 'null'], format: uuid, description: Hồ sơ gia phả gắn với tài khoản }
+        viewPolicyId: { type: [string, 'null'], format: uuid, description: '`null`: dùng chế độ xem mặc định (MEMBER) hoặc toàn dòng họ (EDITOR)' }
+        joinedAt: { type: string, format: date-time }
+        version: { type: integer }
+    UpdateMemberRequest:
+      type: object
+      required: [version]
+      properties:
+        role: { $ref: '#/components/schemas/AssignableRole' }
+        personId: { type: [string, 'null'], format: uuid }
+        viewPolicyId: { type: [string, 'null'], format: uuid }
+        version: { type: integer }
+    OwnProfileRequest:
+      type: object
+      required: [phone, email, currentAddress, isRestricted]
+      properties:
+        phone: { type: [string, 'null'], maxLength: 30 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        currentAddress: { type: [string, 'null'], maxLength: 500 }
+        isRestricted: { type: boolean }
+    CreatePersonClaimRequest:
+      type: object
+      required: [personId]
+      properties:
+        personId: { type: string, format: uuid }
+        note: { type: [string, 'null'], maxLength: 500 }
+    PersonClaim:
+      type: object
+      required: [id, person, user, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        person: { $ref: '#/components/schemas/PersonRef' }
+        user: { $ref: '#/components/schemas/UserRef' }
+        status: { $ref: '#/components/schemas/ClaimStatus' }
+        note: { type: [string, 'null'] }
+        decisionNote: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        decidedAt: { type: [string, 'null'], format: date-time }
+    DecisionNote:
+      type: object
+      properties:
+        note: { type: [string, 'null'], maxLength: 2000 }
+    RequiredDecisionNote:
+      type: object
+      required: [note]
+      properties:
+        note: { type: string, minLength: 1, maxLength: 2000 }
+    ReasonRequest:
+      type: object
+      properties:
+        reason: { type: [string, 'null'], maxLength: 2000 }
+    TokenStatus:
+      type: string
+      enum: [ACTIVE, ACCEPTED, REVOKED, EXPIRED]
+    Invitation:
+      type: object
+      required: [id, email, role, status, expiresAt, createdBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/AssignableRole' }
+        personId: { type: [string, 'null'], format: uuid }
+        viewPolicyId: { type: [string, 'null'], format: uuid }
+        status: { $ref: '#/components/schemas/TokenStatus' }
+        expiresAt: { type: string, format: date-time }
+        createdBy: { $ref: '#/components/schemas/UserRef' }
+        createdAt: { type: string, format: date-time }
+    CreateInvitationRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/AssignableRole' }
+        personId: { type: [string, 'null'], format: uuid, description: Hồ sơ được gắn khi người nhận chấp nhận }
+        viewPolicyId: { type: [string, 'null'], format: uuid, description: 'Chế độ xem riêng; `null` hoặc vắng mặt: chế độ xem mặc định' }
+        expiresInDays: { type: integer, minimum: 1, maximum: 14, default: 7 }
+    InvitationCreated:
+      type: object
+      required: [invitation, token, acceptUrl]
+      properties:
+        invitation: { $ref: '#/components/schemas/Invitation' }
+        token: { type: string, description: Chỉ trả về một lần }
+        acceptUrl: { type: string, format: uri, example: 'https://giapha.example/invite#3q2-7wEj...' }
+
+    # ---------- Ownership
+    TransferRequest:
+      type: object
+      required: [toUserId]
+      properties:
+        toUserId: { type: string, format: uuid }
+        reason: { type: [string, 'null'], maxLength: 2000 }
+    OwnershipTransfer:
+      type: object
+      required: [id, kind, status, fromUser, toUser, requestedBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/TransferKind' }
+        status: { $ref: '#/components/schemas/TransferStatus' }
+        fromUser: { $ref: '#/components/schemas/UserRef' }
+        toUser: { $ref: '#/components/schemas/UserRef' }
+        requestedBy: { $ref: '#/components/schemas/UserRef' }
+        reason: { type: [string, 'null'] }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        effectiveAt: { type: [string, 'null'], format: date-time, description: Thời điểm kết thúc thời gian chờ }
+        endorsementCount: { type: integer }
+        endorsementsRequired: { type: integer }
+        createdAt: { type: string, format: date-time }
+        decidedAt: { type: [string, 'null'], format: date-time }
+        decisionNote: { type: [string, 'null'] }
+
+    # ---------- Share links
+    ShareLink:
+      type: object
+      required: [id, viewPolicyId, status, createdBy, createdAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: [string, 'null'] }
+        viewPolicyId: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE, REVOKED, EXPIRED] }
+        expiresAt: { type: [string, 'null'], format: date-time, description: '`null`: không thời hạn' }
+        lastUsedAt: { type: [string, 'null'], format: date-time }
+        createdBy: { $ref: '#/components/schemas/UserRef' }
+        createdAt: { type: string, format: date-time }
+        version: { type: integer }
+    CreateShareLinkRequest:
+      type: object
+      required: [viewPolicyId]
+      properties:
+        label: { type: [string, 'null'], maxLength: 200 }
+        viewPolicyId: { type: string, format: uuid }
+        expiresAt: { type: [string, 'null'], format: date-time, description: '`null` hoặc vắng mặt: không thời hạn' }
+    UpdateShareLinkRequest:
+      type: object
+      required: [version]
+      properties:
+        label: { type: [string, 'null'], maxLength: 200 }
+        viewPolicyId: { type: string, format: uuid }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        version: { type: integer }
+    ShareLinkCreated:
+      type: object
+      required: [shareLink, token, url]
+      properties:
+        shareLink: { $ref: '#/components/schemas/ShareLink' }
+        token: { type: string, description: Chỉ trả về một lần }
+        url: { type: string, format: uri, example: 'https://giapha.example/s#Zk3...' }
+
+    # ---------- Person
+    PersonRef:
+      type: object
+      required: [id, fullName, gender]
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        gender: { $ref: '#/components/schemas/Gender' }
+    PersonSummary:
+      type: object
+      description: |
+        Dùng cho kết quả tìm kiếm. Các thuộc tính `id`, `fullName`, `redactedFields` luôn có mặt;
+        các thuộc tính khác vắng mặt khi bị ẩn theo nhóm trường.
+      required: [id, fullName, redactedFields]
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        gender: { $ref: '#/components/schemas/Gender' }
+        generation: { type: [integer, 'null'], description: 'Đời thứ mấy tính từ thủy tổ; null nếu chưa nối vào cây' }
+        isLiving: { type: boolean }
+        birth: { $ref: '#/components/schemas/EventDate' }
+        death: { $ref: '#/components/schemas/EventDate' }
+        hasPhoto: { type: boolean }
+        redactedFields:
+          type: array
+          items: { type: string }
+          description: Danh sách trường (dạng đường dẫn) bị ẩn đối với người xem hiện tại
+    PersonDetail:
+      allOf:
+        - $ref: '#/components/schemas/PersonSummary'
+        - type: object
+          required: [version]
+          properties:
+            otherNames: { type: [string, 'null'], description: 'Tên tự, hiệu, húy' }
+            isRestricted: { type: boolean, description: Chỉ hiển thị với EDITOR trở lên và chính chủ hồ sơ }
+            birthPlace: { type: [string, 'null'] }
+            burialPlace: { type: [string, 'null'] }
+            occupation: { type: [string, 'null'] }
+            biography: { type: [string, 'null'] }
+            currentAddress: { type: [string, 'null'] }
+            phone: { type: [string, 'null'] }
+            email: { type: [string, 'null'] }
+            nationalId: { type: [string, 'null'] }
+            privateNote: { type: [string, 'null'] }
+            relatives:
+              type: object
+              description: Chỉ gồm người trong phạm vi xem
+              properties:
+                parents:
+                  type: array
+                  items: { $ref: '#/components/schemas/PersonRef' }
+                spouses:
+                  type: array
+                  items:
+                    type: object
+                    required: [person, unionId]
+                    properties:
+                      person: { $ref: '#/components/schemas/PersonRef' }
+                      unionId: { type: string, format: uuid }
+                      order: { type: [integer, 'null'] }
+                      status: { $ref: '#/components/schemas/UnionStatus' }
+                children:
+                  type: array
+                  items:
+                    type: object
+                    required: [person, unionId]
+                    properties:
+                      person: { $ref: '#/components/schemas/PersonRef' }
+                      unionId: { type: string, format: uuid }
+                      birthOrder: { type: [integer, 'null'] }
+                      relation: { $ref: '#/components/schemas/ChildRelation' }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            version: { type: integer }
+    PersonFields:
+      type: object
+      description: Các trường ghi được, dùng chung cho thao tác tạo và sửa
+      properties:
+        fullName: { type: string, minLength: 1, maxLength: 200 }
+        otherNames: { type: [string, 'null'], maxLength: 500 }
+        gender: { $ref: '#/components/schemas/Gender' }
+        isLiving: { type: boolean }
+        isRestricted: { type: boolean }
+        birth: { $ref: '#/components/schemas/EventDate' }
+        death: { $ref: '#/components/schemas/EventDate' }
+        birthPlace: { type: [string, 'null'], maxLength: 500 }
+        burialPlace: { type: [string, 'null'], maxLength: 500 }
+        occupation: { type: [string, 'null'], maxLength: 200 }
+        biography: { type: [string, 'null'], maxLength: 20000 }
+        currentAddress: { type: [string, 'null'], maxLength: 500 }
+        phone: { type: [string, 'null'], maxLength: 30 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        nationalId: { type: [string, 'null'], maxLength: 20, description: Chỉ OWNER ghi được }
+        privateNote: { type: [string, 'null'], maxLength: 5000, description: Chỉ OWNER ghi được }
+    CreatePersonRequest:
+      allOf:
+        - $ref: '#/components/schemas/PersonFields'
+        - type: object
+          required: [fullName]
+          properties:
+            link: { $ref: '#/components/schemas/PersonLink' }
+    UpdatePersonRequest:
+      allOf:
+        - $ref: '#/components/schemas/PersonFields'
+        - type: object
+          required: [version]
+          properties:
+            version: { type: integer }
+    PersonLink:
+      description: Gắn người mới vào cây tại thời điểm tạo
+      oneOf:
+        - $ref: '#/components/schemas/LinkAsChild'
+        - $ref: '#/components/schemas/LinkAsSpouse'
+      discriminator:
+        propertyName: type
+        mapping:
+          CHILD: '#/components/schemas/LinkAsChild'
+          SPOUSE: '#/components/schemas/LinkAsSpouse'
+    LinkAsChild:
+      type: object
+      required: [type, unionId]
+      properties:
+        type: { type: string, const: CHILD }
+        unionId: { type: string, format: uuid }
+        relation: { $ref: '#/components/schemas/ChildRelation' }
+        birthOrder: { type: [integer, 'null'], minimum: 1 }
+    LinkAsSpouse:
+      type: object
+      required: [type, personId]
+      properties:
+        type: { type: string, const: SPOUSE }
+        personId: { type: string, format: uuid, description: Người đã có trong cây }
+        status: { $ref: '#/components/schemas/UnionStatus' }
+        order: { type: [integer, 'null'], minimum: 1, description: Đây là hôn phối thứ mấy của personId }
+    PersonPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PersonSummary' }
+        page: { $ref: '#/components/schemas/PageMeta' }
+    PageMeta:
+      type: object
+      required: [number, size, totalItems, totalPages]
+      properties:
+        number: { type: integer }
+        size: { type: integer }
+        totalItems: { type: integer }
+        totalPages: { type: integer }
+
+    # ---------- Union
+    Union:
+      type: object
+      required: [id, status, children, version]
+      properties:
+        id: { type: string, format: uuid }
+        partnerA:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        partnerB:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        partnerAOrder: { type: [integer, 'null'] }
+        partnerBOrder: { type: [integer, 'null'] }
+        status: { $ref: '#/components/schemas/UnionStatus' }
+        note: { type: [string, 'null'] }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/UnionChild' }
+        version: { type: integer }
+    CreateUnionRequest:
+      type: object
+      description: Bắt buộc có ít nhất một trong hai thuộc tính partnerAId, partnerBId; hai người phải khác nhau.
+      properties:
+        partnerAId: { type: [string, 'null'], format: uuid }
+        partnerBId: { type: [string, 'null'], format: uuid }
+        partnerAOrder: { type: [integer, 'null'], minimum: 1 }
+        partnerBOrder: { type: [integer, 'null'], minimum: 1 }
+        status: { $ref: '#/components/schemas/UnionStatus' }
+        note: { type: [string, 'null'], maxLength: 1000 }
+    UpdateUnionRequest:
+      type: object
+      required: [version]
+      properties:
+        partnerAId: { type: [string, 'null'], format: uuid }
+        partnerBId: { type: [string, 'null'], format: uuid }
+        partnerAOrder: { type: [integer, 'null'], minimum: 1 }
+        partnerBOrder: { type: [integer, 'null'], minimum: 1 }
+        status: { $ref: '#/components/schemas/UnionStatus' }
+        note: { type: [string, 'null'], maxLength: 1000 }
+        version: { type: integer }
+    UnionChild:
+      type: object
+      required: [person]
+      properties:
+        person: { $ref: '#/components/schemas/PersonRef' }
+        birthOrder: { type: [integer, 'null'] }
+        relation:
+          $ref: '#/components/schemas/ChildRelation'
+          description: Chỉ có mặt khi người xem có nhóm trường ADOPTION
+    AddChildRequest:
+      type: object
+      required: [childId]
+      properties:
+        childId: { type: string, format: uuid }
+        relation: { $ref: '#/components/schemas/ChildRelation' }
+        birthOrder: { type: [integer, 'null'], minimum: 1 }
+    UpdateChildRequest:
+      type: object
+      properties:
+        relation: { $ref: '#/components/schemas/ChildRelation' }
+        birthOrder: { type: [integer, 'null'], minimum: 1 }
+
+    # ---------- Tree
+    TreePerson:
+      type: object
+      required: [id, fullName, gender]
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        gender: { $ref: '#/components/schemas/Gender' }
+        generation: { type: [integer, 'null'] }
+        isLiving: { type: boolean, description: Yêu cầu nhóm trường LIFE_EVENTS }
+        lifespan:
+          type: string
+          description: 'Chuỗi hiển thị đã áp dụng quy tắc ẩn trường, ví dụ "1890 – 1952", "khoảng 1895 – Chưa rõ"; yêu cầu nhóm LIFE_EVENTS'
+        hasPhoto: { type: boolean, description: Yêu cầu nhóm trường BIOGRAPHY }
+    TreeUnion:
+      type: object
+      required: [id, children]
+      properties:
+        id: { type: string, format: uuid }
+        partnerAId: { type: [string, 'null'], format: uuid }
+        partnerBId: { type: [string, 'null'], format: uuid }
+        partnerAOrder: { type: [integer, 'null'] }
+        partnerBOrder: { type: [integer, 'null'] }
+        status: { $ref: '#/components/schemas/UnionStatus' }
+        children:
+          type: array
+          items:
+            type: object
+            required: [childId]
+            properties:
+              childId: { type: string, format: uuid }
+              birthOrder: { type: [integer, 'null'] }
+              relation:
+                $ref: '#/components/schemas/ChildRelation'
+                description: Chỉ có mặt khi người xem có nhóm trường ADOPTION
+    TreeResponse:
+      type: object
+      required: [rootPersonId, depthDown, depthUp, truncated, persons, unions]
+      properties:
+        rootPersonId: { type: [string, 'null'], format: uuid }
+        depthDown: { type: integer }
+        depthUp: { type: integer }
+        truncated: { type: boolean }
+        persons:
+          type: array
+          items: { $ref: '#/components/schemas/TreePerson' }
+        unions:
+          type: array
+          items: { $ref: '#/components/schemas/TreeUnion' }
+
+    KinshipResponse:
+      type: object
+      required: [found]
+      properties:
+        found: { type: boolean }
+        commonAncestor:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        generationsFromA: { type: [integer, 'null'] }
+        generationsFromB: { type: [integer, 'null'] }
+        term: { type: [string, 'null'], description: 'Cách xưng hô, ví dụ "chú họ"', example: chú họ }
+
+    # ---------- Audit
+    AuditEntry:
+      type: object
+      required: [id, action, createdAt]
+      properties:
+        id: { type: integer }
+        action: { $ref: '#/components/schemas/AuditAction' }
+        actorUser:
+          oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - type: 'null'
+        actorShareLinkId: { type: [string, 'null'], format: uuid }
+        entityType: { type: [string, 'null'] }
+        entityId: { type: [string, 'null'], format: uuid }
+        detail: { type: object, additionalProperties: true }
+        ip: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+    AuditPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AuditEntry' }
+        page: { $ref: '#/components/schemas/PageMeta' }
+
+    # ---------- Admin
+    AdminClan:
+      type: object
+      required: [id, name, status, planCode, personCount, memberCount, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { $ref: '#/components/schemas/ClanStatus' }
+        ownerUserId: { type: [string, 'null'], format: uuid }
+        ownerEmail: { type: [string, 'null'] }
+        ownerLastActiveAt: { type: [string, 'null'], format: date-time }
+        planCode: { type: string }
+        currentPeriodEnd: { type: [string, 'null'], format: date-time }
+        personCount: { type: integer }
+        memberCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    AdminUser:
+      type: object
+      required: [id, email, displayName, status, emailVerified, lastActiveAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        displayName: { type: string }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        systemRole:
+          oneOf:
+            - $ref: '#/components/schemas/SystemRole'
+            - type: 'null'
+        emailVerified: { type: boolean }
+        lastActiveAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    SetClanStatusRequest:
+      type: object
+      required: [status, reason]
+      properties:
+        status: { $ref: '#/components/schemas/ClanStatus' }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+    SetUserStatusRequest:
+      type: object
+      required: [status, reason]
+      properties:
+        status: { $ref: '#/components/schemas/UserStatus' }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+    GrantSubscriptionRequest:
+      type: object
+      required: [planCode, reason]
+      properties:
+        planCode: { type: string }
+        periodEnd: { type: [string, 'null'], format: date-time, description: '`null`: không thời hạn' }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+    SystemSetting:
+      type: object
+      required: [key, value, description]
+      properties:
+        key: { type: string, example: OWNER_INACTIVE_DAYS }
+        value: { type: integer }
+        description: { type: string }
+    PendingReview:
+      type: object
+      required: [transferId, clanId, clanName, fromUserEmail, toUserEmail, requestedByEmail, endorsementCount, createdAt]
+      properties:
+        transferId: { type: string, format: uuid }
+        clanId: { type: string, format: uuid }
+        clanName: { type: string }
+        fromUserEmail: { type: string }
+        toUserEmail: { type: string }
+        requestedByEmail: { type: string }
+        reason: { type: [string, 'null'] }
+        endorsementCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    AdminAuditEntry:
+      type: object
+      required: [id, action, createdAt]
+      properties:
+        id: { type: integer }
+        actorUserId: { type: [string, 'null'], format: uuid }
+        action: { type: string }
+        targetType: { type: [string, 'null'] }
+        targetId: { type: [string, 'null'] }
+        detail: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }

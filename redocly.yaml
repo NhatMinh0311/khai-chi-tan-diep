@@ -1,0 +1,5 @@
+extends:
+  - recommended
+rules:
+  info-license: off              # API nội bộ, không công bố giấy phép
+  no-server-example.com: off     # khai báo máy chủ cục bộ và mock là chủ ý

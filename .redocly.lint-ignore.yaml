@@ -1,0 +1,8 @@
+# Ngoại lệ có chủ ý: hai endpoint nhận callback từ VNPay phải phản hồi theo đặc tả của VNPay
+# (return URL luôn chuyển hướng 302; IPN luôn trả HTTP 200 kèm RspCode trong body).
+api/openapi.yaml:
+  operation-2xx-response:
+    - '#/paths/~1payments~1vnpay~1return/get/responses'
+  operation-4xx-response:
+    - '#/paths/~1payments~1vnpay~1return/get/responses'
+    - '#/paths/~1payments~1vnpay~1ipn/get/responses'

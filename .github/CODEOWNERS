@@ -1,0 +1,3 @@
+# Người review bắt buộc cho mọi thay đổi vào nhánh main.
+# Có hiệu lực khi ruleset của main bật "Require review from Code Owners".
+*    @NhatMinh0311

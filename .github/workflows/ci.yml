@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-lint:
+    name: api-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Kiểm tra đặc tả API
+        run: npx --yes @redocly/cli@1.34.5 lint api/openapi.yaml
+
+  db-tests:
+    name: db-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tạo biến môi trường tạm thời
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "GP_OWNER_PASSWORD=$(openssl rand -hex 16)"
+            echo "GP_APP_PASSWORD=$(openssl rand -hex 16)"
+            echo "REDIS_PASSWORD=$(openssl rand -hex 16)"
+          } > .env
+      - name: Khởi động PostgreSQL
+        run: docker compose up -d --wait db
+      - name: Áp dụng migration
+        run: docker compose run --rm migrate
+      - name: Kiểm thử RLS, ràng buộc và hàm nghiệp vụ
+        run: ./db/tests/run.sh
+      - name: Log PostgreSQL khi thất bại
+        if: failure()
+        run: docker compose logs db

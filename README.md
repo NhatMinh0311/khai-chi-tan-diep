@@ -6,31 +6,31 @@ Công nghệ: React, Spring Boot, PostgreSQL, Redis.
 
 ## Cấu trúc kho mã
 
-| Đường dẫn | Nội dung |
-|---|---|
-| `api/openapi.yaml` | Đặc tả API, là hợp đồng giữa frontend và backend |
-| `db/init/` | Khởi tạo tài khoản cơ sở dữ liệu `gp_owner`, `gp_app` |
-| `db/migration/` | Migration Flyway: V1 lược đồ, V2 RLS và hàm nghiệp vụ, V3 dữ liệu tham chiếu |
-| `db/tests/` | Kiểm thử RLS, ràng buộc và hàm nghiệp vụ, chạy bằng quyền của backend |
-| `db/scripts/` | Script quản trị chạy bằng `gp_owner` (cấp vai trò hệ thống) |
-| `docs/01-pham-vi.md` | GP-DOC-01: Phạm vi, user story, tiêu chí chấp nhận |
-| `docs/02-mo-hinh-du-lieu.md` | GP-DOC-02: Mô hình dữ liệu |
-| `docs/03-phan-quyen.md` | GP-DOC-03: Phân quyền, cách ly dữ liệu, cache, ánh xạ lỗi |
-| `docs/04-goi-dich-vu-va-thanh-toan.md` | GP-DOC-04: Gói dịch vụ, hạn mức, thanh toán VNPay |
-| `docs/05-quan-tri-va-chuyen-giao.md` | GP-DOC-05: Quản trị nền tảng, xác thực bổ sung, chuyển giao trưởng tộc |
-| `docs/06-quy-trinh-phat-trien.md` | GP-DOC-06: Quy trình phát triển, bảo vệ nhánh, CI/CD |
-| `docs/07-nhat-ky-su-dung-ai.md` | GP-DOC-07: Nhật ký sử dụng công cụ AI |
-| `.github/` | CODEOWNERS, mẫu pull request, workflow CI |
-| `docs/adr/` | Hồ sơ quyết định kiến trúc (ADR-0001 đến ADR-0010) |
+| Đường dẫn                              | Nội dung                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| `api/openapi.yaml`                     | Đặc tả API, là hợp đồng giữa frontend và backend                             |
+| `db/init/`                             | Khởi tạo tài khoản cơ sở dữ liệu `gp_owner`, `gp_app`                        |
+| `db/migration/`                        | Migration Flyway: V1 lược đồ, V2 RLS và hàm nghiệp vụ, V3 dữ liệu tham chiếu |
+| `db/tests/`                            | Kiểm thử RLS, ràng buộc và hàm nghiệp vụ, chạy bằng quyền của backend        |
+| `db/scripts/`                          | Script quản trị chạy bằng `gp_owner` (cấp vai trò hệ thống)                  |
+| `docs/01-pham-vi.md`                   | GP-DOC-01: Phạm vi, user story, tiêu chí chấp nhận                           |
+| `docs/02-mo-hinh-du-lieu.md`           | GP-DOC-02: Mô hình dữ liệu                                                   |
+| `docs/03-phan-quyen.md`                | GP-DOC-03: Phân quyền, cách ly dữ liệu, cache, ánh xạ lỗi                    |
+| `docs/04-goi-dich-vu-va-thanh-toan.md` | GP-DOC-04: Gói dịch vụ, hạn mức, thanh toán VNPay                            |
+| `docs/05-quan-tri-va-chuyen-giao.md`   | GP-DOC-05: Quản trị nền tảng, xác thực bổ sung, chuyển giao trưởng tộc       |
+| `docs/06-quy-trinh-phat-trien.md`      | GP-DOC-06: Quy trình phát triển, bảo vệ nhánh, CI/CD                         |
+| `docs/07-nhat-ky-su-dung-ai.md`        | GP-DOC-07: Nhật ký sử dụng công cụ AI                                        |
+| `.github/`                             | CODEOWNERS, mẫu pull request, workflow CI                                    |
+| `docs/adr/`                            | Hồ sơ quyết định kiến trúc (ADR-0001 đến ADR-0010)                           |
 
 ## Môi trường phát triển
 
 Yêu cầu: Docker, Node.js.
 
-| Dịch vụ | Địa chỉ |
-|---|---|
-| PostgreSQL 17 | `localhost:${DB_PORT}` |
-| Redis 7.4 | `localhost:${REDIS_PORT}` (yêu cầu `REDIS_PASSWORD`) |
+| Dịch vụ                | Địa chỉ                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| PostgreSQL 17          | `localhost:${DB_PORT}`                                                         |
+| Redis 7.4              | `localhost:${REDIS_PORT}` (yêu cầu `REDIS_PASSWORD`)                           |
 | Mailpit (SMTP giả lập) | SMTP `localhost:${SMTP_PORT}`, giao diện `http://localhost:${MAILPIT_UI_PORT}` |
 
 ```bash
@@ -53,6 +53,21 @@ docker compose exec -T db psql -U gp_owner -d giapha \
 ## Hướng dẫn theo thành phần
 
 ### Frontend
+
+- Khung frontend hiện nằm tại `frontend/`, dùng React, Vite, Tailwind CSS, React Router và Lucide React.
+- Chạy local: `cd frontend && npm run dev` (mặc định tại `http://localhost:5173`).
+- Các màn hình khung hiện có:
+  - Tổng quan dòng họ (`/`)
+  - Cây gia phả (`/gia-pha/cay`)
+  - Thành viên (`/gia-pha/thanh-vien`)
+  - Quan hệ gia đình (`/gia-pha/quan-he`)
+  - Chế độ xem (`/quyen-han/che-do-xem`)
+  - Link chia sẻ (`/chia-se`)
+  - Nhật ký hoạt động (`/nhat-ky`)
+  - Gói dịch vụ (`/goi-dich-vu`)
+  - Cài đặt (`/cai-dat`)
+  - Quản trị hệ thống (`/quan-tri`)
+- Các trang hiện là placeholder có layout và điều hướng; chưa kết nối API hoặc triển khai nghiệp vụ.
 - Trong giai đoạn backend chưa sẵn sàng, frontend sử dụng mock API tại `http://localhost:4010`. Mọi yêu cầu
   cần header `Authorization: Bearer <token>` (mock chấp nhận giá trị bất kỳ). Ví dụ cụ thể được chọn bằng header
   `Prefer: example=<tên ví dụ>`.
@@ -64,6 +79,7 @@ docker compose exec -T db psql -U gp_owner -d giapha \
   (gói, tính năng, hạn mức).
 
 ### Backend
+
 - Thiết kế entity và repository tuân theo GP-DOC-02 mục 12 và GP-DOC-03 mục 8–10.
 - Ứng dụng kết nối bằng tài khoản `gp_app`. Cấu hình `spring.flyway.enabled=false` (migration chạy riêng bằng
   `gp_owner`) và `spring.jpa.hibernate.ddl-auto=validate`.
@@ -74,6 +90,7 @@ docker compose exec -T db psql -U gp_owner -d giapha \
 - Tác vụ định kỳ của backend được liệt kê tại GP-DOC-05 mục 7.
 
 ## Quy trình đóng góp
+
 Quy trình tại GP-DOC-06; lệnh và thao tác chi tiết tại `CONTRIBUTING.md`.
 
 - Mọi thay đổi vào nhánh `main` được thực hiện qua pull request và phải được review.
